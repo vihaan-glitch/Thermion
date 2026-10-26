@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f5f3ee;
+  --color-card: #ffffff;
+  --color-ink: #1b1a17;
+  --color-muted: #6f6a62;
+  --color-faint: #a39d93;
+  --color-line: #e4e0d8;
+  --color-ok: #0f766e;
+  --color-ok-soft: #e3f2ef;
+  --color-advisory: #b45309;
+  --color-advisory-soft: #fdf0dc;
+  --color-unusable: #b91c1c;
+  --color-unusable-soft: #fbe4e2;
+  --color-sky: #2f6fb0;
+  --color-sun: #f59e0b;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Range input used by the solar sweep scrubber. */
+input[type="range"].scrubber {
+  appearance: none;
+  width: 100%;
+  height: 2.25rem;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"].scrubber::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1e3a5f 0%, #f59e0b 35%, #f97316 65%, #1e3a5f 100%);
+}
+input[type="range"].scrubber::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1e3a5f 0%, #f59e0b 35%, #f97316 65%, #1e3a5f 100%);
+}
+input[type="range"].scrubber::-webkit-slider-thumb {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid var(--color-ink);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
+}
+input[type="range"].scrubber::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #fff;
+  border: 3px solid var(--color-ink);
+}
