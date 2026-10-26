@@ -89,6 +89,31 @@ export default function ReportForm({ schools, rooms }: { schools: School[]; room
             {r.rhEstimated ? " (estimated)" : ""} · <strong>{THRESHOLD_LABEL[r.state]}</strong>
           </p>
         </div>
+        <div className="rounded-2xl border border-line bg-card p-4 text-sm">
+          {r.filter.accepted ? (
+            <p>
+              <strong>{r.filter.reason === "corroborated" ? "Accepted (corroborated)." : "Accepted by the model."}</strong>{" "}
+              The physics predicted{" "}
+              <span className="num">
+                {r.filter.predictedF.toFixed(1)} ± {(2 * r.filter.predictedSdF).toFixed(1)}°F
+              </span>{" "}
+              here. This room&apos;s time constant is now estimated at{" "}
+              <span className="num">
+                {(1 / r.filter.invRC).toFixed(1)} h (1/RC = {r.filter.invRC.toFixed(2)} ± {r.filter.invRCSd.toFixed(2)} /h)
+              </span>
+              .
+            </p>
+          ) : (
+            <p>
+              <strong>Logged, but held back as a possible outlier.</strong> The model expected{" "}
+              <span className="num">
+                {r.filter.predictedF.toFixed(1)} ± {(2 * r.filter.predictedSdF).toFixed(1)}°F
+              </span>{" "}
+              (normalized innovation {r.filter.nis.toFixed(1)} &gt; {r.filter.gate.toFixed(2)}). A second reading that agrees with
+              yours will override the model.
+            </p>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => {

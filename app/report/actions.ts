@@ -4,10 +4,13 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { heatIndexF } from "@/lib/heatindex";
 import { estimateIndoorRh } from "@/lib/humidity";
-import { createRoom, findRoomByNumber, getRoom, getSchool, insertReport, weatherHours } from "@/lib/repo";
+import { CHI2_1DOF_99 } from "@/lib/kalman";
+import { createRoom, findRoomByNumber, getRoom, getSchool, weatherHours } from "@/lib/repo";
+import { recordReport } from "@/lib/roomModel";
 import { HOUR_MS } from "@/lib/time";
 import { classifyHeatIndex, type ThresholdState } from "@/lib/thresholds";
 import { NEW_ROOM_DEFAULTS, parseReportForm, type FieldErrors } from "@/lib/validate";
+import { loadWeather } from "@/lib/weather";
 import { weatherAt } from "@/lib/weatherSeries";
 
 export interface ReportActionState {
@@ -22,6 +25,16 @@ export interface ReportActionState {
     rhPct: number;
     rhEstimated: boolean;
     state: ThresholdState;
+    filter: {
+      accepted: boolean;
+      reason: "accepted" | "corroborated" | "outlier";
+      predictedF: number;
+      predictedSdF: number;
+      nis: number;
+      gate: number;
+      invRC: number;
+      invRCSd: number;
+    };
   };
 }
 
@@ -55,7 +68,14 @@ export async function submitReport(_prev: ReportActionState, formData: FormData)
   }
 
   const nowMs = Date.now();
-  insertReport(db, {
+  // Refresh the logged forecast so the filter propagates through real weather,
+  // but never hold a reporter up for more than ~2.5 s if NWS is slow.
+  await Promise.race([
+    loadWeather(db, school, { fromMs: nowMs - 6 * HOUR_MS, toMs: nowMs + 6 * HOUR_MS, nowMs }).catch(() => null),
+    new Promise((r) => setTimeout(r, 2500)),
+  ]);
+
+  const { outcome } = recordReport(db, school, room, {
     room_id: room.id,
     temp_f: input.tempF,
     humidity_pct: input.humidityPct,
@@ -86,6 +106,16 @@ export async function submitReport(_prev: ReportActionState, formData: FormData)
       rhPct: rh.rhPct,
       rhEstimated: rh.estimated,
       state: classifyHeatIndex(hi),
+      filter: {
+        accepted: outcome.accepted,
+        reason: outcome.reason,
+        predictedF: outcome.predictedF,
+        predictedSdF: outcome.predictedSdF,
+        nis: outcome.nis,
+        gate: CHI2_1DOF_99,
+        invRC: outcome.state.x[1],
+        invRCSd: Math.sqrt(outcome.state.P[1][1]),
+      },
     },
   };
 }

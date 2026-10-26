@@ -1,8 +1,7 @@
 import { getDb } from "./db";
-import { peakIn, predictRoom, type PredictionPoint } from "./prediction";
-import { heatwaveSeries, heatwaveStartMs, type ScenarioId } from "./scenario";
-import { schoolDayWindow } from "./schedule";
-import { defaultParams } from "./thermal";
+import type { PredictionPoint } from "./prediction";
+import { buildForecast, type RoomPeak } from "./roomModel";
+import type { ScenarioId } from "./scenario";
 import { heatIndexF } from "./heatindex";
 import { estimateIndoorRh } from "./humidity";
 import { getSchool, latestReportByRoom, listReportsForSchool, listRooms, reportCountsByRoom } from "./repo";
@@ -10,7 +9,9 @@ import { classifyHeatIndex, type ThresholdState } from "./thresholds";
 import { DAY_MS, HOUR_MS, startOfLocalDay } from "./time";
 import type { Report, Room, School } from "./types";
 import { loadWeather, type WeatherContext } from "./weather";
-import { weatherAt, type WeatherSample } from "./weatherSeries";
+import { weatherAt } from "./weatherSeries";
+
+export type { RoomPeak };
 
 /** Server-side assembly of everything the dashboard renders. */
 
@@ -30,17 +31,16 @@ export interface OutdoorPoint {
   heatIndexF: number | null;
 }
 
-export interface RoomPeak {
-  t: number;
-  indoorF: number;
-  heatIndexF: number;
-}
-
 export interface RoomPrediction {
   roomId: number;
   points: PredictionPoint[];
   /** Peak heat index during school hours on day 1 / day 2 of the window. */
   peaks: [RoomPeak | null, RoomPeak | null];
+  /** Peak HI 1σ the physics prior alone would give (only for reported rooms). */
+  priorPeakSd: [number | null, number | null];
+  state: { t: number; invRC: number; invRCSd: number; alpha: number; alphaSd: number } | null;
+  rejectedCount: number;
+  filtered: { t: number; tempF: number; accepted: boolean; reason: string; nis: number; predictedF: number }[];
 }
 
 export interface SweepDay {
@@ -123,34 +123,20 @@ export async function loadDashboard(scenario: ScenarioId = "live"): Promise<Dash
       heatIndexF: s.rhPct != null ? heatIndexF(s.tempF, s.rhPct) : null,
     }));
 
-  // ---- Physics predictions -------------------------------------------------
-  let predSeries: WeatherSample[];
-  let day1Ms: number;
-  let predStart: number;
-  if (scenario === "heatwave") {
-    day1Ms = heatwaveStartMs(nowMs, school.tz);
-    predSeries = heatwaveSeries(day1Ms, school.tz);
-    predStart = day1Ms;
-  } else {
-    day1Ms = dayStartMs;
-    predSeries = weather.series;
-    predStart = Math.max(dayStartMs, predSeries[0]?.t ?? dayStartMs);
-  }
-  const day2Ms = startOfLocalDay(day1Ms + DAY_MS + 2 * HOUR_MS, school.tz);
-  const predEnd = startOfLocalDay(day2Ms + DAY_MS + 2 * HOUR_MS, school.tz);
-  const site = { lat: school.lat, lon: school.lon };
-  const sd1 = schoolDayWindow(day1Ms + 12 * HOUR_MS, school.tz);
-  const sd2 = schoolDayWindow(day2Ms + 12 * HOUR_MS, school.tz);
-
-  const predictions: RoomPrediction[] = rooms.map((room) => {
-    const points = predictRoom(room, predSeries, defaultParams(room, site), { startMs: predStart, endMs: predEnd });
-    const pk = (w: { startMs: number; endMs: number }): RoomPeak | null => {
-      const p = peakIn(points, "heatIndexF", w.startMs, w.endMs);
-      return p ? { t: p.t, indoorF: p.indoorF, heatIndexF: p.heatIndexF } : null;
-    };
-    return { roomId: room.id, points, peaks: [pk(sd1), pk(sd2)] };
-  });
+  // ---- Filtered physics predictions ---------------------------------------
+  const fc = buildForecast(db, school, scenario, nowMs, weather.series);
+  const { day1Ms, day2Ms } = fc.window;
+  const predictions: RoomPrediction[] = fc.rooms.map((r) => ({
+    roomId: r.room.id,
+    points: r.points,
+    peaks: r.peaks,
+    priorPeakSd: r.priorPeakSd,
+    state: r.state ? { t: r.state.t, invRC: r.state.x[1], invRCSd: Math.sqrt(r.state.P[1][1]), alpha: r.state.x[2], alphaSd: Math.sqrt(r.state.P[2][2]) } : null,
+    rejectedCount: r.rejectedCount,
+    filtered: r.logs.map((l) => ({ t: Date.parse(l.created_at), tempF: l.observed_f, accepted: l.accepted === 1, reason: l.reason, nis: l.nis, predictedF: l.predicted_f })),
+  }));
   const predOutdoor = (predictions[0]?.points ?? []).map((p) => ({ t: p.t, tempF: p.outdoorF }));
+  const predSeries = fc.series;
 
   const skyFor = (start: number) =>
     predSeries.filter((s) => s.t >= start && s.t < start + DAY_MS).map((s) => ({ t: s.t, skyCoverPct: s.skyCoverPct }));
@@ -175,7 +161,7 @@ export async function loadDashboard(scenario: ScenarioId = "live"): Promise<Dash
   return {
     school,
     scenario,
-    predWindow: { startMs: predStart, endMs: predEnd, day1Ms, day2Ms },
+    predWindow: fc.window,
     predOutdoor,
     predictions,
     sweepDays,

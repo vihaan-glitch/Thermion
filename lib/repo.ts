@@ -93,16 +93,19 @@ export function insertReport(db: DB, r: NewReport): Report {
   return { id: Number(res.lastInsertRowid), ...r };
 }
 
+/** Reports for a school (optionally since an instant), excluding rejected outliers. */
 export function listReportsForSchool(db: DB, schoolId: number, sinceIso?: string): Report[] {
   return db
     .prepare(
       `SELECT r.* FROM reports r JOIN rooms m ON m.id = r.room_id
        WHERE m.school_id = ? AND (? IS NULL OR r.reported_at >= ?)
+         AND NOT EXISTS (SELECT 1 FROM filter_log f WHERE f.report_id = r.id AND f.accepted = 0)
        ORDER BY r.reported_at`,
     )
     .all(schoolId, sinceIso ?? null, sinceIso ?? null) as Report[];
 }
 
+/** Latest report per room, skipping reports the Kalman filter rejected as outliers. */
 export function latestReportByRoom(db: DB, schoolId: number): Map<number, Report> {
   const rows = db
     .prepare(
@@ -110,6 +113,7 @@ export function latestReportByRoom(db: DB, schoolId: number): Map<number, Report
        JOIN rooms m ON m.id = r.room_id
        WHERE m.school_id = ?
          AND r.id = (SELECT r2.id FROM reports r2 WHERE r2.room_id = r.room_id
+                       AND NOT EXISTS (SELECT 1 FROM filter_log f WHERE f.report_id = r2.id AND f.accepted = 0)
                      ORDER BY r2.reported_at DESC, r2.id DESC LIMIT 1)`,
     )
     .all(schoolId) as Report[];
@@ -178,4 +182,78 @@ export function weatherHours(db: DB, schoolId: number, fromMs: number, toMs: num
     rhPct: r.rh_pct,
     skyCoverPct: r.sky_cover_pct,
   }));
+}
+
+// ---- Kalman state + audit log ------------------------------------------------
+
+export interface RoomStateRow {
+  room_id: number;
+  t_indoor: number;
+  inv_rc: number;
+  alpha: number;
+  cov_json: string;
+  updated_at: string;
+}
+
+export function getRoomState(db: DB, roomId: number): RoomStateRow | null {
+  return (db.prepare("SELECT * FROM room_state WHERE room_id = ?").get(roomId) as RoomStateRow | undefined) ?? null;
+}
+
+export function listRoomStates(db: DB, schoolId: number): Map<number, RoomStateRow> {
+  const rows = db
+    .prepare("SELECT s.* FROM room_state s JOIN rooms r ON r.id = s.room_id WHERE r.school_id = ?")
+    .all(schoolId) as RoomStateRow[];
+  return new Map(rows.map((r) => [r.room_id, r]));
+}
+
+export function upsertRoomState(db: DB, row: RoomStateRow): void {
+  db.prepare(
+    `INSERT INTO room_state (room_id, t_indoor, inv_rc, alpha, cov_json, updated_at)
+     VALUES (@room_id, @t_indoor, @inv_rc, @alpha, @cov_json, @updated_at)
+     ON CONFLICT (room_id) DO UPDATE SET t_indoor = excluded.t_indoor, inv_rc = excluded.inv_rc,
+       alpha = excluded.alpha, cov_json = excluded.cov_json, updated_at = excluded.updated_at`,
+  ).run(row);
+}
+
+export interface FilterLogRow {
+  id: number;
+  report_id: number;
+  room_id: number;
+  accepted: number;
+  reason: "accepted" | "corroborated" | "outlier";
+  observed_f: number;
+  predicted_f: number;
+  predicted_sd_f: number;
+  innovation_f: number;
+  nis: number;
+  measurement_var: number;
+  state_after_json: string;
+  created_at: string;
+}
+
+export function insertFilterLog(db: DB, row: Omit<FilterLogRow, "id">): void {
+  db.prepare(
+    `INSERT INTO filter_log (report_id, room_id, accepted, reason, observed_f, predicted_f, predicted_sd_f,
+       innovation_f, nis, measurement_var, state_after_json, created_at)
+     VALUES (@report_id, @room_id, @accepted, @reason, @observed_f, @predicted_f, @predicted_sd_f,
+       @innovation_f, @nis, @measurement_var, @state_after_json, @created_at)`,
+  ).run(row);
+}
+
+export function filterLogForSchool(db: DB, schoolId: number): FilterLogRow[] {
+  return db
+    .prepare(
+      `SELECT f.* FROM filter_log f JOIN rooms r ON r.id = f.room_id
+       WHERE r.school_id = ? ORDER BY f.created_at, f.id`,
+    )
+    .all(schoolId) as FilterLogRow[];
+}
+
+export function recentRejections(db: DB, roomId: number, sinceIso: string): FilterLogRow[] {
+  return db
+    .prepare(
+      `SELECT * FROM filter_log WHERE room_id = ? AND accepted = 0 AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 3`,
+    )
+    .all(roomId, sinceIso) as FilterLogRow[];
 }

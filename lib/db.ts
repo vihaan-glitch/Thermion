@@ -74,6 +74,27 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (school_id, start_time)
   );
   `,
+  // 2: Kalman filter audit log. One row per report the filter processed,
+  // accepted or rejected, with the posterior state so the UI can draw the
+  // prediction track piecewise through every accepted report.
+  `
+  CREATE TABLE filter_log (
+    id INTEGER PRIMARY KEY,
+    report_id INTEGER NOT NULL UNIQUE REFERENCES reports(id),
+    room_id INTEGER NOT NULL REFERENCES rooms(id),
+    accepted INTEGER NOT NULL CHECK (accepted IN (0,1)),
+    reason TEXT NOT NULL CHECK (reason IN ('accepted','corroborated','outlier')),
+    observed_f REAL NOT NULL,
+    predicted_f REAL NOT NULL,
+    predicted_sd_f REAL NOT NULL,
+    innovation_f REAL NOT NULL,
+    nis REAL NOT NULL,
+    measurement_var REAL NOT NULL,
+    state_after_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX filter_log_room ON filter_log(room_id, created_at);
+  `,
 ];
 
 function migrate(db: DB): void {

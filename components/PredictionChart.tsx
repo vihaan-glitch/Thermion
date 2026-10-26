@@ -22,6 +22,8 @@ import { AXIS, SERIES, THRESHOLD_COLORS, hourTicks } from "./chartTheme";
 export interface PredRoomOption {
   id: number;
   label: string;
+  /** AC rooms track a setpoint, so an outdoor-to-indoor lag is meaningless for them. */
+  hasAc: boolean;
   points: { t: number; indoorF: number; outdoorF: number; sdF?: number }[];
   reports: { t: number; tempF: number; accepted: boolean }[];
 }
@@ -66,7 +68,7 @@ export default function PredictionChart({ tz, nowMs, fromMs, toMs, dayBoundaries
     const bounds = [...dayBoundaries, toMs];
     for (let i = 0; i < bounds.length - 1; i++) {
       const seg = room.points.filter((p) => p.t >= bounds[i] && p.t < bounds[i + 1]);
-      if (seg.length < 24) continue; // need a meaningful part of the day
+      if (seg.length === 0 || seg[seg.length - 1].t - seg[0].t < 18 * 3_600_000) continue; // need most of the day
       const o = seg.reduce((a, b) => (b.outdoorF > a.outdoorF ? b : a));
       const n = seg.reduce((a, b) => (b.indoorF > a.indoorF ? b : a));
       // Skip days where the window starts after the outdoor peak.
@@ -77,8 +79,10 @@ export default function PredictionChart({ tz, nowMs, fromMs, toMs, dayBoundaries
   }, [room, dayBoundaries, toMs]);
 
   const vals = data.flatMap((d) => [d.indoorF, d.outdoorF, ...(d.band ?? [])]);
-  const max = Math.max(...vals, ...room.reports.map((r) => r.tempF));
-  const min = Math.min(...vals, ...room.reports.map((r) => r.tempF));
+  // Rejected outliers are drawn but do not stretch the axis.
+  const accepted = room.reports.filter((r) => r.accepted).map((r) => r.tempF);
+  const max = Math.max(...vals, ...accepted);
+  const min = Math.min(...vals, ...accepted);
   const showThresholds = max >= ADVISORY_HEAT_INDEX_F - 8;
   const yMax = Math.ceil(((showThresholds ? Math.max(max, UNUSABLE_HEAT_INDEX_F) : max) + 1) / 5) * 5;
   const yMin = Math.floor((min - 1) / 5) * 5;
@@ -104,7 +108,7 @@ export default function PredictionChart({ tz, nowMs, fromMs, toMs, dayBoundaries
             ))}
           </select>
         </label>
-        {lastPeak && (
+        {lastPeak && !room.hasAc && lastPeak.indoor.t > lastPeak.outdoor.t && (
           <p className="num text-sm text-muted">
             Indoor peak lags outdoor by <strong className="text-ink">{fmtLag(lastPeak.indoor.t - lastPeak.outdoor.t)}</strong>
           </p>
@@ -115,7 +119,8 @@ export default function PredictionChart({ tz, nowMs, fromMs, toMs, dayBoundaries
           { label: outdoorLabel, color: SERIES.outdoor },
           { label: "Predicted indoor", color: SERIES.indoor },
           ...(hasBand ? [{ label: "±2σ uncertainty", color: SERIES.indoor, band: true }] : []),
-          ...(room.reports.length ? [{ label: "Report", color: "#1b1a17", dot: true }] : []),
+          ...(room.reports.some((r) => r.accepted) ? [{ label: "Accepted report", color: "#1b1a17", dot: true }] : []),
+          ...(room.reports.some((r) => !r.accepted) ? [{ label: "Rejected outlier", color: "#b45309", dot: true }] : []),
         ]}
       />
       <div className="h-72 w-full">
@@ -132,7 +137,7 @@ export default function PredictionChart({ tz, nowMs, fromMs, toMs, dayBoundaries
               tick={AXIS.tick}
               allowDataOverflow
             />
-            <YAxis domain={[yMin, yMax]} ticks={yTicks} stroke={AXIS.stroke} tick={AXIS.tick} tickFormatter={(v: number) => `${v}°`} width={48} />
+            <YAxis allowDataOverflow domain={[yMin, yMax]} ticks={yTicks} stroke={AXIS.stroke} tick={AXIS.tick} tickFormatter={(v: number) => `${v}°`} width={48} />
             {dayBoundaries.slice(1).map((d) => (
               <ReferenceLine key={d} x={d} stroke={AXIS.stroke} />
             ))}
@@ -156,21 +161,35 @@ export default function PredictionChart({ tz, nowMs, fromMs, toMs, dayBoundaries
             {peaks.map((p) => (
               <ReferenceDot key={`i${p.day}`} x={p.indoor.t} y={p.indoor.v} r={4} fill={SERIES.indoor} stroke="#fff" strokeWidth={2} />
             ))}
-            {room.reports.length > 0 && (
+            {room.reports.some((r) => r.accepted) && (
               <Scatter
-                data={room.reports.map((r) => ({ t: r.t, reportF: r.tempF, accepted: r.accepted }))}
+                data={room.reports.filter((r) => r.accepted).map((r) => ({ t: r.t, reportF: r.tempF }))}
                 dataKey="reportF"
-                name="Report"
+                name="Accepted report"
                 fill="#1b1a17"
                 stroke="#fff"
                 strokeWidth={2}
                 isAnimationActive={false}
               />
             )}
+            {room.reports.some((r) => !r.accepted) && (
+              <Scatter
+                data={room.reports
+                  .filter((r) => !r.accepted)
+                  .map((r) => ({ t: r.t, rejectedF: Math.max(yMin, Math.min(yMax, r.tempF)), actualF: r.tempF }))}
+                dataKey="rejectedF"
+                name="Rejected outlier"
+                fill="#fff"
+                stroke="#b45309"
+                strokeWidth={2}
+                shape="diamond"
+                isAnimationActive={false}
+              />
+            )}
             <Tooltip
               content={({ active, payload, label }) => {
                 if (!active || !payload?.length) return null;
-                const row = payload[0]?.payload as { t: number; indoorF?: number; outdoorF?: number; band?: [number, number]; reportF?: number };
+                const row = payload[0]?.payload as { t: number; indoorF?: number; outdoorF?: number; band?: [number, number]; reportF?: number; rejectedF?: number; actualF?: number };
                 const t = typeof label === "number" ? label : row.t;
                 return (
                   <div className="num rounded-lg border border-line bg-card px-3 py-2 text-xs shadow-sm">
@@ -188,6 +207,9 @@ export default function PredictionChart({ tz, nowMs, fromMs, toMs, dayBoundaries
                           {row.band ? ` ± ${((row.band[1] - row.band[0]) / 2).toFixed(1)}` : ""}
                         </span>
                       </p>
+                    )}
+                    {row.rejectedF != null && (
+                      <p className="text-advisory">◆ Rejected outlier {(row.actualF ?? row.rejectedF).toFixed(1)}°F</p>
                     )}
                     {row.reportF != null && (
                       <p className="text-muted">
