@@ -1,19 +1,25 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import OutdoorChart from "@/components/OutdoorChart";
+import PredictionChart from "@/components/PredictionChart";
+import SolarSweep from "@/components/SolarSweep";
 import StatusBadge from "@/components/StatusBadge";
 import { SERIES } from "@/components/chartTheme";
 import { Banner, Card, EmptyState, Legend } from "@/components/ui";
-import { loadDashboard, type DashboardData } from "@/lib/dashboard";
-import { DAY_MS, formatClock, formatDayClock, timeAgo } from "@/lib/time";
+import { loadDashboard, type DashboardData, type RoomPeak } from "@/lib/dashboard";
+import { HEATWAVE_DESCRIPTION, parseScenario } from "@/lib/scenario";
+import { classifyHeatIndex } from "@/lib/thresholds";
+import { DAY_MS, formatClock, formatDate, formatDayClock, timeAgo } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Dashboard" };
 
-export default async function DashboardPage() {
-  const data = await loadDashboard();
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ scenario?: string | string[] }> }) {
+  const scenario = parseScenario((await searchParams).scenario);
+  const data = await loadDashboard(scenario);
   if (!data) return <EmptyState title="No school configured." />;
-  const { school, weather, nowMs, dayStartMs } = data;
+  const { school, weather, nowMs, dayStartMs, predWindow } = data;
+  const isScenario = scenario === "heatwave";
 
   const roomById = new Map(data.rows.map((r) => [r.room.id, r.room]));
   const reportDots = data.reportsToday.map((r) => ({
@@ -22,11 +28,27 @@ export default async function DashboardPage() {
     label: `Room ${roomById.get(r.room_id)?.room_number ?? "?"}`,
   }));
 
+  const predByRoom = new Map(data.predictions.map((p) => [p.roomId, p]));
+  const hottestPredicted = [...data.predictions].sort(
+    (a, b) => Math.max(b.peaks[0]?.heatIndexF ?? -1, b.peaks[1]?.heatIndexF ?? -1) - Math.max(a.peaks[0]?.heatIndexF ?? -1, a.peaks[1]?.heatIndexF ?? -1),
+  )[0];
+  const predRooms = data.rows.map((r) => ({
+    id: r.room.id,
+    label: `${r.room.room_number} · Fl ${r.room.floor} · ${r.room.orientation}${r.room.has_ac ? " · AC" : ""}`,
+    points: (predByRoom.get(r.room.id)?.points ?? []).map((p) => ({ t: p.t, indoorF: p.indoorF, outdoorF: p.outdoorF })),
+    reports: isScenario
+      ? []
+      : data.reportsToday.filter((x) => x.room_id === r.room.id).map((x) => ({ t: Date.parse(x.reported_at), tempF: x.temp_f, accepted: true })),
+  }));
+
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-sm text-muted">{school.name} · {school.district}</p>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Classroom conditions</h1>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm text-muted">{school.name} · {school.district}</p>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Classroom conditions</h1>
+        </div>
+        <ScenarioToggle scenario={scenario} />
       </div>
 
       {weather.status !== "live" && (
@@ -38,6 +60,47 @@ export default async function DashboardPage() {
       )}
 
       <Hero data={data} />
+
+      {isScenario && (
+        <Banner tone="info">
+          <strong>Demo scenario.</strong> {HEATWAVE_DESCRIPTION} Predictions below run the same physics on this synthetic weather
+          ({formatDate(predWindow.day1Ms, school.tz)} – {formatDate(predWindow.day2Ms, school.tz)}). Reports and the hero above stay live.
+        </Banner>
+      )}
+
+      <Card
+        title="Solar sweep"
+        subtitle="Sunlight striking each room's windows, by facade. Drag the slider or press play to watch the south and west faces light up as the day advances."
+      >
+        <SolarSweep
+          rooms={data.rows.map((r) => r.room)}
+          lat={school.lat}
+          lon={school.lon}
+          tz={school.tz}
+          days={data.sweepDays}
+          nowMs={nowMs}
+        />
+      </Card>
+
+      <Card
+        title="Predicted indoor temperature"
+        subtitle={`Lumped RC model driven by ${isScenario ? "the scenario weather" : "the NWS forecast"} and window solar gain. Dots mark each day's outdoor and indoor peaks.`}
+      >
+        {predRooms.length > 0 && hottestPredicted ? (
+          <PredictionChart
+            tz={school.tz}
+            nowMs={isScenario ? null : nowMs}
+            fromMs={predWindow.startMs}
+            toMs={predWindow.endMs}
+            dayBoundaries={[predWindow.day1Ms, predWindow.day2Ms]}
+            rooms={predRooms}
+            initialRoomId={hottestPredicted.roomId}
+            outdoorLabel={isScenario ? "Outdoor (scenario)" : "Outdoor (NWS)"}
+          />
+        ) : (
+          <EmptyState title="No rooms to predict." />
+        )}
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card
@@ -149,13 +212,26 @@ function Hero({ data }: { data: DashboardData }) {
   );
 }
 
+function PeakCell({ peak }: { peak: RoomPeak | null }) {
+  if (!peak) return <span className="text-faint">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="num">{peak.heatIndexF.toFixed(0)}°</span>
+      <StatusBadge state={classifyHeatIndex(peak.heatIndexF)} />
+    </span>
+  );
+}
+
 function RoomsCard({ data }: { data: DashboardData }) {
   const { rows, school, nowMs } = data;
+  const peaks = new Map(data.predictions.map((p) => [p.roomId, p.peaks]));
+  const d1 = formatDate(data.predWindow.day1Ms, school.tz).split(",")[0];
+  const d2 = formatDate(data.predWindow.day2Ms, school.tz).split(",")[0];
   const anyReports = rows.some((r) => r.latest);
   return (
     <Card
       title={`Rooms (${rows.length})`}
-      subtitle={anyReports ? "Latest reading per room. Heat index uses reported humidity, or an estimate when none was given." : undefined}
+      subtitle="Latest reading per room, and the physics model's predicted peak heat index during school hours (7:30–2:05). Heat index uses reported humidity, or an estimate when none was given."
     >
       {!anyReports && (
         <div className="mb-4">
@@ -175,7 +251,9 @@ function RoomsCard({ data }: { data: DashboardData }) {
               <th className="py-2 pr-2 font-medium">Cooling</th>
               <th className="py-2 pr-2 font-medium">Latest reading</th>
               <th className="py-2 pr-2 font-medium">Heat index</th>
-              <th className="py-2 font-medium">Status</th>
+              <th className="py-2 pr-2 font-medium">Status</th>
+              <th className="py-2 pr-2 font-medium" title="Predicted peak heat index during school hours">Pred. peak {d1}</th>
+              <th className="py-2 font-medium" title="Predicted peak heat index during school hours">Pred. peak {d2}</th>
             </tr>
           </thead>
           <tbody>
@@ -215,8 +293,14 @@ function RoomsCard({ data }: { data: DashboardData }) {
                     <span className="text-faint">—</span>
                   )}
                 </td>
-                <td className="py-2">
+                <td className="py-2 pr-2">
                   <StatusBadge state={r.latestState} />
+                </td>
+                <td className="py-2 pr-2">
+                  <PeakCell peak={peaks.get(r.room.id)?.[0] ?? null} />
+                </td>
+                <td className="py-2">
+                  <PeakCell peak={peaks.get(r.room.id)?.[1] ?? null} />
                 </td>
               </tr>
             ))}
@@ -240,12 +324,34 @@ function RoomsCard({ data }: { data: DashboardData }) {
                   ? `${r.latest.temp_f.toFixed(0)}°F · HI ${r.latestHeatIndexF!.toFixed(0)}° · ${timeAgo(Date.parse(r.latest.reported_at), nowMs)}`
                   : "no reports"}
               </p>
+              <p className="num text-xs text-muted">
+                Pred. peak HI {d1} {peaks.get(r.room.id)?.[0]?.heatIndexF.toFixed(0) ?? "—"}° · {d2}{" "}
+                {peaks.get(r.room.id)?.[1]?.heatIndexF.toFixed(0) ?? "—"}°
+              </p>
             </div>
-            <StatusBadge state={r.latestState} />
+            <StatusBadge state={r.latestState ?? (peaks.get(r.room.id)?.[1] ? classifyHeatIndex(peaks.get(r.room.id)![1]!.heatIndexF) : null)} prefix={r.latestState ? undefined : "Pred."} />
           </li>
         ))}
       </ul>
       <p className="mt-3 text-xs text-faint">Times shown in {school.tz.replace("_", " ")}.</p>
     </Card>
+  );
+}
+
+function ScenarioToggle({ scenario }: { scenario: "live" | "heatwave" }) {
+  const item = (href: string, label: string, active: boolean) => (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={`rounded-md px-3 py-1.5 text-xs font-semibold ${active ? "bg-ink text-paper" : "text-muted hover:text-ink"}`}
+    >
+      {label}
+    </Link>
+  );
+  return (
+    <div className="inline-flex rounded-lg border border-line bg-card p-1">
+      {item("/dashboard", "Live forecast", scenario === "live")}
+      {item("/dashboard?scenario=heatwave", "Heat-wave scenario", scenario === "heatwave")}
+    </div>
   );
 }
