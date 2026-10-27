@@ -48,7 +48,7 @@ export interface NwsError {
 
 /** NWS asks for an app name plus a contact; set NWS_USER_AGENT in deployment to add yours. */
 export const NWS_USER_AGENT =
-  process.env.NWS_USER_AGENT ?? "Roomtemp/1.0 (per-classroom heat prediction for school districts)";
+  process.env.NWS_USER_AGENT ?? "Thermion/1.0 (per-classroom heat prediction for school districts)";
 
 const NWS_BASE = "https://api.weather.gov";
 const CACHE_TTL_MS = 30 * 60 * 1000;

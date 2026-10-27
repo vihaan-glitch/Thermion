@@ -189,19 +189,19 @@ export function openDb(file: string): DB {
 }
 
 /**
- * ./data/roomtemp.db locally. Vercel's filesystem is read-only apart from
+ * ./data/thermion.db locally. Vercel's filesystem is read-only apart from
  * /tmp, so there the database lives in /tmp (ephemeral per instance; see
- * README limitations). ROOMTEMP_DB overrides both.
+ * README limitations). THERMION_DB overrides both.
  */
 export function defaultDbPath(): string {
-  if (process.env.ROOMTEMP_DB) return process.env.ROOMTEMP_DB;
-  if (process.env.VERCEL) return "/tmp/roomtemp.db";
-  return path.join(process.cwd(), "data", "roomtemp.db");
+  if (process.env.THERMION_DB) return process.env.THERMION_DB;
+  if (process.env.VERCEL) return "/tmp/thermion.db";
+  return path.join(process.cwd(), "data", "thermion.db");
 }
 
-const globalForDb = globalThis as unknown as { __roomtempDb?: DB };
+const globalForDb = globalThis as unknown as { __thermionDb?: DB };
 
 export function getDb(): DB {
-  if (!globalForDb.__roomtempDb) globalForDb.__roomtempDb = openDb(defaultDbPath());
-  return globalForDb.__roomtempDb;
+  if (!globalForDb.__thermionDb) globalForDb.__thermionDb = openDb(defaultDbPath());
+  return globalForDb.__thermionDb;
 }

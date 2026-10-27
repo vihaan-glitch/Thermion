@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "Roomtemp", template: "%s · Roomtemp" },
+  title: { default: "Thermion", template: "%s · Thermion" },
   description:
     "Per-classroom heat prediction from building physics, sharpened by sparse human reports.",
 };
@@ -27,7 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="border-b border-line bg-paper/90 backdrop-blur sticky top-0 z-20">
           <nav className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
             <Link href="/dashboard" className="flex items-baseline gap-2">
-              <span className="text-lg font-semibold tracking-tight">Roomtemp</span>
+              <span className="text-lg font-semibold tracking-tight">Thermion</span>
               <span className="hidden text-xs text-muted sm:inline">classroom heat, measured by physics</span>
             </Link>
             <div className="flex items-center gap-1 text-sm">

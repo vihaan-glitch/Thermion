@@ -56,7 +56,7 @@ describe("NWS client", () => {
     if (!res.ok) return;
     expect(calls.map((c) => c.url)).toEqual([POINTS_URL, HOURLY_URL]);
     const ua = new Headers(calls[0].init?.headers).get("User-Agent");
-    expect(ua).toMatch(/Roomtemp/);
+    expect(ua).toMatch(/Thermion/);
     expect(res.value.periods).toHaveLength(2);
     expect(res.value.periods[0].temperatureF).toBe(91);
     expect(res.value.periods[0].relativeHumidityPct).toBe(48);

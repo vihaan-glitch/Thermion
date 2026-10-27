@@ -1,8 +1,8 @@
-# Roomtemp
+# Thermion
 
 School districts decide heat-related early dismissals from the **outdoor** forecast. Individual classrooms are never measured, and a second-floor southwest room with no AC can be far hotter than the outdoor reading the decision rests on.
 
-Roomtemp predicts per-room conditions from building physics, sharpens those predictions with sparse human reports through a per-room Kalman filter, and recommends which classes to move.
+Thermion predicts per-room conditions from building physics, sharpens those predictions with sparse human reports through a per-room Kalman filter, and recommends which classes to move.
 
 - **/dashboard**: outdoor-versus-hottest-room hero, a scrubbable **solar sweep** of every facade, predicted indoor curves with ±2σ bands, per-room learned parameters, and the filter's accept/reject log.
 - **/report**: a mobile-first, one-handed form to report a classroom temperature in under ten seconds.
@@ -21,14 +21,14 @@ npm test           # vitest: physics, filter, optimizer, NWS client, DB
 npm run build      # production build (type-checks)
 ```
 
-The SQLite database is created at `./data/roomtemp.db` on first request. Migrations run automatically, and the seed adds one school (Morris Hills High School), 16 rooms and 14 classes. **No reports are seeded.**
+The SQLite database is created at `./data/thermion.db` on first request. Migrations run automatically, and the seed adds one school (Morris Hills High School), 16 rooms and 14 classes. **No reports are seeded.**
 
 Environment variables (all optional):
 
 | Variable | Purpose |
 |---|---|
 | `NWS_USER_AGENT` | User-Agent sent to api.weather.gov. NWS asks for an app name plus contact info; set this in production. |
-| `ROOMTEMP_DB` | Path to the SQLite file (default `./data/roomtemp.db`, or `/tmp/roomtemp.db` on Vercel). |
+| `THERMION_DB` | Path to the SQLite file (default `./data/thermion.db`, or `/tmp/thermion.db` on Vercel). |
 
 The only external network dependency is `api.weather.gov`. There is no auth.
 
@@ -38,7 +38,7 @@ The only external network dependency is `api.weather.gov`. There is no auth.
 npx vercel deploy --prod
 ```
 
-Vercel's filesystem is read-only apart from `/tmp`, so the database lives in `/tmp/roomtemp.db` there. It is **ephemeral per serverless instance**: reports survive while an instance stays warm, but a cold start re-seeds an empty database. That is fine for a demo. A production deployment should mount a persistent volume (any Node host) or point `ROOMTEMP_DB` at durable storage.
+Vercel's filesystem is read-only apart from `/tmp`, so the database lives in `/tmp/thermion.db` there. It is **ephemeral per serverless instance**: reports survive while an instance stays warm, but a cold start re-seeds an empty database. That is fine for a demo. A production deployment should mount a persistent volume (any Node host) or point `THERMION_DB` at durable storage.
 
 ## Architecture
 

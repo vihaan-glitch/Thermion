@@ -21,7 +21,7 @@ const STATE_STYLE = {
   unusable: "bg-unusable-soft text-unusable border-unusable/30",
 } as const;
 
-const LS_KEY = "roomtemp:last";
+const LS_KEY = "thermion:last";
 
 function seg(active: boolean) {
   return `min-h-12 rounded-lg border text-sm font-medium transition-colors ${
